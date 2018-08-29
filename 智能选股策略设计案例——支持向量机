@@ -13,3 +13,138 @@
 #3.最后通过松弛变量，允许支持向量机间有一定弹性，减少犯错误的成本。
 
 #智能选股策略设计案例背景
+#背景——人工智能在金融市场的应用主要体现在支付，结算，信贷，保险，财富管理，智能选股几方面。目前市场上存在管理能力与现实市场的鸿沟，数据量巨大但人工成本昂贵等问题，由此出现可供给需求和伪供给需求
+#智能选股思路：
+#1.数据分析采集，通过挖掘文本，通过利用舆情做指数，模拟识别市场情绪正向及负向，通过同大盘对比分析模型。根据目前市场发展情况，市场越发成熟，散户退出概率变大。
+#2.结构化分析，通过句子分词，转化为向量，并将图片、文本、音频、视频均转化为文本形式。
+#3.建立模型，图像CNN，文本LSTM，结构化DNN
+#4.模型验证，回测，比较并进行调参
+#5.模型应用
+
+#案例内容
+#变量：行情变量，估值变量，技术指标等
+#变量筛选：方法——方差分析，woe构建信息熵，随机森林，特征选择（根据公开指数及外界的特征)
+#训练集测试集选择：将第一季度作为训练集，第二季度作为测试集，同大盘指数做对比，调整周期为一季度，中长期。训练集：二季度股票涨幅-大盘指数涨幅，正为1，负为0，二分类
+#数据处理注意问题：变量需变形，主键进行合并，数据类型转化为因子类型，检查训练集和测试集，结构需一样。
+
+#R语言实现
+rm(list = ls())
+data=read.csv('C:\\Users\\Administrator\\Desktop\\300DATA.csv',stringsAsFactors = F)
+View(data)
+library(reshape2) #载入包
+date1="X2013Q1"
+date2="X2013Q2"
+date3="X2013Q3"
+#抽取数据
+rawdata1=data[c('factor','stock',date1)]
+rawdata2=data[c('factor','stock',date2)]
+rawdata3=data[c('factor','stock',date3)]
+#colnames(rawdata3)=c("factor","stock","value")
+#长数据变为宽数据
+rawdata1=dcast(rawdata1,stock~factor,value.var=date1)
+rawdata2 = dcast(rawdata2,stock~factor,value.var = date2)
+rawdata3 = dcast(rawdata3,stock~factor,value.var = date3)
+head(rawdata2)
+View(rawdata2)
+#train data
+traindata=merge(rawdata1,rawdata2[c('stock','收盘价','涨跌幅')],by='stock')
+overrata=traindata$'涨跌幅.y'-traindata[which(traindata$stock=='沪深300'),'涨跌幅.y']
+traindata = cbind(traindata,overrata)
+traindata=na.omit(traindata)
+label=ifelse(traindata$overrata>0,1,0)
+traindata = cbind(traindata,label)
+nrow(traindata)
+nrow(label)
+View(traindata)
+traindata$label=as.factor(traindata$label)
+traindata.svm<-traindata
+traindata.svm[c('收盘价.x','收盘价.y','涨跌幅.y','overrata')]<-NULL
+
+
+#testdata
+testdata = merge(rawdata2,rawdata3[c('stock','收盘价','涨跌幅')],by='stock')
+overrata2=testdata$涨跌幅.y-testdata[which(testdata$stock=='沪深300'),'涨跌幅.y']
+testdata = cbind(testdata,overrata2)
+testdata = na.omit(testdata)
+label2=ifelse(testdata$overrata>0,1,0)
+testdata = cbind(testdata,label2)
+nrow(traindata)
+nrow(label)
+View(traindata)
+testdata$label=as.factor(testdata$label)
+testdata.svm<-testdata
+testdata.svm[c('收盘价.x','收盘价.y','涨跌幅.y','overrata')]<-NULL
+
+install.packages('e1071')
+library(e1071)
+svm.kernel=c("linear", "polynomial","sigmoid","radial")
+for(i in 1:length(svm.kernel))
+{
+  svm.class=svm(label ~ ., data = traindata.svm[,-1],kernel=svm.kernel[i],class.weights=c('1' = 1, '0'=1.2),cross=50)
+  
+  svm.predictions <- predict(svm.class, traindata.svm[,c(-1,-18)])
+  svm.agreement <- svm.predictions == traindata.svm$label
+  suss.table=table(svm.predictions, traindata.svm$label)
+  suss.prop=prop.table(table(svm.agreement))
+  result=c(svm.kernel[i],suss.table[2,2]/sum(suss.table[2,]),suss.prop[2])
+  print(result)
+}
+
+#训练模型
+svm.class=svm(label ~ ., data = traindata.svm[,-1],kernel="radial",class.weights=c('1' = 1, '0'=1.2),cross=20)
+#对测试集预测
+svm.predictions <- predict(svm.class, testdata.svm[,c(-1,-18)])
+#逻辑判断对于训练集的预测结果
+svm.agreement <- svm.predictions == testdata.svm$label
+suss.table=table(svm.predictions, testdata.svm$label)
+suss.prop=prop.table(table(svm.agreement))
+#第一项是上涨股票的命中率，第二项是整体命中率
+result=c(suss.table[2,2]/sum(suss.table[2,]),suss.prop[2])
+print(result)
+library(gmodels)#混淆矩阵可视化
+CrossTable(testdata.svm$label, svm.predictions, prop.chisq = FALSE, prop.c = T, 
+           prop.r = T, dnn = c("actual", "predicted "))
+pool=cbind(testdata,svm.predictions)
+callpool=pool[which(pool$svm.predictions=='1'),]
+mean(callpool$overrata)*4
+#参数优化，网格，梯度下降，遗传算法·
+p.cost=seq(from=0.1,to=3,by=0.1)
+p.tolerance=seq(from=0.0005,to=0.01,by=0.001)
+p.epsilon=seq(from=0.02,to=0.1,by=0.02)
+vp.cost=rep(p.cost,each=(length(p.tolerance)*length(p.epsilon)))
+vp.tolerance=rep(rep(p.tolerance,times =length(p.cost)),each=length(p.epsilon))
+vp.epsilon=rep(p.epsilon,times=(length(p.cost)*length(p.tolerance)))
+param=cbind(vp.cost,vp.tolerance,vp.epsilon)
+param=as.data.frame(param)
+result=c()
+
+#开始循环（读者可以尝试将循环部分改写成并行运算）
+for(i in 1:nrow(param))
+{
+  svm.class=svm(label ~ ., data = traindata.svm[,-1],kernel="radial",
+                class.weights=c('1' = 1, '0'=1.2),cross=20,
+                cost=param$vp.cost[i],tolerance=param$vp.tolerance[i]
+                ,epsilon=param$vp.epsilon[i])
+  svm.predictions <- predict(svm.class,  testdata.svm[,c(-1,-18)])
+  svm.agreement <- svm.predictions == testdata.svm$label
+  suss.table=table(svm.predictions, testdata.svm$label)
+  suss.prop=prop.table(table(svm.agreement))
+  #存储看涨胜率和总体胜率
+  result=rbind(result,c(suss.table[2,2]/sum(suss.table[2,]),suss.prop[2]))
+  print(i)#这一步其实没有必要，只是为了查看循环进度
+}
+
+svm.class=svm(label ~ ., data = traindata.svm[,-1],kernel="radial",
+              class.weights=c('1' = 1, '0'=1.2),cross=20,
+              cost=0.6,tolerance=0.0005,epsilon=0.02)
+svm.predictions <- predict(svm.class, testdata.svm[,c(-1,-18)])
+svm.agreement <- svm.predictions == testdata.svm$label
+suss.table=table(svm.predictions, testdata.svm$label)
+suss.prop=prop.table(table(svm.agreement))
+print(c(suss.table[2,2]/sum(suss.table[2,]),suss.prop[2]))
+
+pool=cbind(testdata,svm.predictions)
+callpool=pool[which(pool$svm.predictions=='1'),]
+
+
+
